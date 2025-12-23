@@ -75,11 +75,52 @@ http://localhost:8000
 
 ### Botões
 
-- `GET /api/buttons` - Lista todos os botões
-- `GET /api/buttons/{position}` - Obtém um botão específico
-- `PUT /api/buttons/{position}` - Atualiza um botão
-- `POST /api/buttons/{position}/upload-icon` - Faz upload de imagem para o ícone
-- `POST /api/buttons/{position}/execute` - Executa o comando de um botão
+- `GET /api/buttons` - Lista todos os botões (requer autenticação)
+- `GET /api/buttons/{position}` - Obtém um botão específico (requer autenticação)
+- `PUT /api/buttons/{position}` - Atualiza um botão (requer autenticação)
+- `POST /api/buttons/{position}/upload-icon` - Faz upload de imagem para o ícone (requer autenticação)
+- `POST /api/buttons/{position}/execute` - Executa o comando de um botão (requer autenticação)
+
+### API Pública (para acesso remoto)
+
+- `GET /api/execute/{position}?api_key=SUA_API_KEY` - **Executa um botão via API Key** (público, ideal para C/Cheap Yellow Display)
+
+### API Keys
+
+- `POST /api/api-keys` - Cria uma nova API Key (requer autenticação)
+- `GET /api/api-keys` - Lista todas as API Keys (requer autenticação)
+- `DELETE /api/api-keys/{key_id}` - Desativa uma API Key (requer autenticação)
+
+## Uso Remoto (API Key)
+
+Para usar com Cheap Yellow Display ou qualquer cliente em C, você precisa:
+
+1. **Criar uma API Key**: Acesse a interface web e vá na seção "API Keys"
+2. **Use a URL pública**: 
+   ```
+   GET http://localhost:8000/api/execute/{position}?api_key=SUA_API_KEY
+   ```
+
+### Exemplo em C
+
+Veja o arquivo `example_c.c` para um exemplo completo usando libcurl:
+
+```c
+// Compilar: gcc -o client example_c.c -lcurl
+execute_button(0, "sua-api-key", "http://localhost:8000");
+```
+
+### Exemplo com curl
+
+```bash
+curl "http://localhost:8000/api/execute/0?api_key=sua-api-key"
+```
+
+### Exemplo com script
+
+```bash
+./example_curl.sh 0 "sua-api-key"
+```
 
 ## Segurança
 
@@ -103,6 +144,8 @@ cyd-stream-deck/
 ├── templates/
 │   └── index.html        # Interface web
 ├── uploads/              # Diretório para imagens dos ícones
+├── example_c.c           # Exemplo de uso em C
+├── example_curl.sh       # Exemplo de uso com curl
 └── stream_deck.db        # Banco SQLite (criado automaticamente)
 ```
 

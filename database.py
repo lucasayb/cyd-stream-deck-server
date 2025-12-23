@@ -29,6 +29,16 @@ class User(Base):
     hashed_password = Column(String, nullable=False)
 
 
+class ApiKey(Base):
+    __tablename__ = "api_keys"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    key = Column(String, unique=True, nullable=False, index=True)
+    name = Column(String, default="")  # Nome descritivo da chave
+    created_at = Column(String, default="")  # Timestamp de criação
+    is_active = Column(Integer, default=1)  # 1 = ativa, 0 = desativada
+
+
 def init_db():
     """Inicializa o banco de dados criando as tabelas"""
     Base.metadata.create_all(bind=engine)

@@ -11,7 +11,7 @@ import shutil
 from pathlib import Path
 from dotenv import load_dotenv
 
-from database import get_db, Button, User, init_db
+from database import get_db, Button, User, ApiKey, init_db
 from security import (
     verify_password,
     get_password_hash,
@@ -19,8 +19,10 @@ from security import (
     get_current_user,
     ACCESS_TOKEN_EXPIRE_MINUTES
 )
-from datetime import timedelta
+from datetime import datetime, timedelta
 from command_validator import validate_command
+import secrets
+from fastapi import Query
 
 load_dotenv()
 
@@ -56,6 +58,18 @@ def create_default_admin():
         db.close()
 
 create_default_admin()
+
+
+# Função para validar API Key
+def validate_api_key(api_key: str, db: Session) -> bool:
+    """Valida se a API key existe e está ativa"""
+    if not api_key:
+        return False
+    key_obj = db.query(ApiKey).filter(
+        ApiKey.key == api_key,
+        ApiKey.is_active == 1
+    ).first()
+    return key_obj is not None
 
 
 # Models
@@ -94,6 +108,21 @@ class LoginRequest(BaseModel):
 class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
+
+
+class ApiKeyResponse(BaseModel):
+    id: int
+    key: str
+    name: str
+    created_at: str
+    is_active: bool
+
+    class Config:
+        from_attributes = True
+
+
+class ApiKeyCreate(BaseModel):
+    name: str = ""
 
 
 # API Routes
@@ -212,13 +241,8 @@ async def update_button(
     return button
 
 
-@app.post("/api/buttons/{position}/execute")
-async def execute_button(
-    position: int,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    """Executa o comando de um botão"""
+def execute_button_command(position: int, db: Session):
+    """Função auxiliar para executar comando de um botão"""
     button = db.query(Button).filter(Button.position == position).first()
     if not button:
         raise HTTPException(status_code=404, detail="Botão não encontrado")
@@ -249,6 +273,97 @@ async def execute_button(
         raise HTTPException(status_code=408, detail="Comando excedeu o tempo limite")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erro ao executar comando: {str(e)}")
+
+
+@app.post("/api/buttons/{position}/execute")
+async def execute_button(
+    position: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Executa o comando de um botão (requer autenticação JWT)"""
+    return execute_button_command(position, db)
+
+
+@app.get("/api/execute/{position}")
+async def execute_button_public(
+    position: int,
+    api_key: str = Query(..., description="API Key para autenticação"),
+    db: Session = Depends(get_db)
+):
+    """
+    Executa o comando de um botão via API Key (público)
+    
+    Uso em C:
+    ```c
+    // Exemplo usando libcurl
+    curl_easy_setopt(curl, CURLOPT_URL, "http://localhost:8000/api/execute/0?api_key=SUA_API_KEY");
+    ```
+    
+    Ou simplesmente:
+    ```
+    GET http://localhost:8000/api/execute/0?api_key=SUA_API_KEY
+    ```
+    """
+    # Valida API key
+    if not validate_api_key(api_key, db):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="API Key inválida ou inativa"
+        )
+    
+    return execute_button_command(position, db)
+
+
+# API Key Management
+@app.post("/api/api-keys", response_model=ApiKeyResponse)
+async def create_api_key(
+    key_data: ApiKeyCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Cria uma nova API Key"""
+    # Gera uma API key segura
+    api_key = secrets.token_urlsafe(32)
+    
+    new_key = ApiKey(
+        key=api_key,
+        name=key_data.name or "API Key",
+        created_at=datetime.now().isoformat(),
+        is_active=1
+    )
+    db.add(new_key)
+    db.commit()
+    db.refresh(new_key)
+    
+    return new_key
+
+
+@app.get("/api/api-keys", response_model=List[ApiKeyResponse])
+async def list_api_keys(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Lista todas as API Keys"""
+    keys = db.query(ApiKey).order_by(ApiKey.created_at.desc()).all()
+    return keys
+
+
+@app.delete("/api/api-keys/{key_id}")
+async def delete_api_key(
+    key_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Desativa uma API Key"""
+    key_obj = db.query(ApiKey).filter(ApiKey.id == key_id).first()
+    if not key_obj:
+        raise HTTPException(status_code=404, detail="API Key não encontrada")
+    
+    key_obj.is_active = 0
+    db.commit()
+    
+    return {"message": "API Key desativada com sucesso"}
 
 
 # Frontend
