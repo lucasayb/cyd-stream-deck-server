@@ -1,12 +1,13 @@
 # Stream Deck Custom - API e Interface Web
 
-Sistema completo para gerenciar um Stream Deck customizado com 9 botões, permitindo configurar ícones, cores e comandos através de uma interface web protegida por autenticação.
+Sistema completo para gerenciar um Stream Deck customizado com 6 botões, permitindo configurar ícones, cores e comandos através de uma interface web protegida por autenticação.
 
 ## Características
 
-- ✅ 9 botões configuráveis
+- ✅ 6 botões configuráveis
 - ✅ Banco de dados SQLite
-- ✅ Interface web com Tailwind CSS
+- ✅ Interface web discreta com lista (Tailwind CSS)
+- ✅ Upload de imagens para ícones
 - ✅ Autenticação por usuário e senha
 - ✅ Sistema de proteção contra comandos perigosos
 - ✅ API REST completa
@@ -57,6 +58,15 @@ http://localhost:8000
    - Usuário: `admin`
    - Senha: `admin123`
 
+## Recursos da Interface
+
+- **Lista discreta**: Visualização dos 6 botões em formato de lista (não grid)
+- **Bolinha de cor**: Indicador de cor ao lado de cada botão (ao invés de fundo colorido)
+- **Upload de imagens**: Envie imagens personalizadas para os ícones dos botões
+- **Emoji alternativo**: Use emojis como alternativa aos ícones de imagem
+- **Execução rápida**: Clique no botão para executar o comando
+- **Edição fácil**: Clique no ícone de edição para configurar cada botão
+
 ## API Endpoints
 
 ### Autenticação
@@ -68,6 +78,7 @@ http://localhost:8000
 - `GET /api/buttons` - Lista todos os botões
 - `GET /api/buttons/{position}` - Obtém um botão específico
 - `PUT /api/buttons/{position}` - Atualiza um botão
+- `POST /api/buttons/{position}/upload-icon` - Faz upload de imagem para o ícone
 - `POST /api/buttons/{position}/execute` - Executa o comando de um botão
 
 ## Segurança
@@ -91,12 +102,13 @@ cyd-stream-deck/
 ├── requirements.txt       # Dependências Python
 ├── templates/
 │   └── index.html        # Interface web
+├── uploads/              # Diretório para imagens dos ícones
 └── stream_deck.db        # Banco SQLite (criado automaticamente)
 ```
 
 ## Desenvolvimento
 
-O banco de dados é criado automaticamente na primeira execução. Os 9 botões são inicializados com valores padrão.
+O banco de dados é criado automaticamente na primeira execução. Os 6 botões são inicializados com valores padrão.
 
 Para alterar as credenciais padrão do admin, configure as variáveis de ambiente `ADMIN_USERNAME` e `ADMIN_PASSWORD` no arquivo `.env`.
 

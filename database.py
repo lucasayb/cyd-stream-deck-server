@@ -14,7 +14,7 @@ class Button(Base):
     __tablename__ = "buttons"
     
     id = Column(Integer, primary_key=True, index=True)
-    position = Column(Integer, unique=True, nullable=False)  # 0-8 para 9 botões
+    position = Column(Integer, unique=True, nullable=False)  # 0-5 para 6 botões
     icon = Column(String, default="📱")  # Emoji ou nome do arquivo de ícone
     background_color = Column(String, default="#3B82F6")  # Cor em hex
     command = Column(Text, nullable=False)  # Comando a ser executado
@@ -38,7 +38,7 @@ def init_db():
     try:
         existing_buttons = db.query(Button).count()
         if existing_buttons == 0:
-            for i in range(9):
+            for i in range(6):
                 button = Button(
                     position=i,
                     icon="📱",

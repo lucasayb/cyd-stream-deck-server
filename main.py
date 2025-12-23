@@ -1,12 +1,14 @@
-from fastapi import FastAPI, Depends, HTTPException, status, Form
+from fastapi import FastAPI, Depends, HTTPException, status, Form, UploadFile, File
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import Optional, List
 import subprocess
 import os
+import shutil
+from pathlib import Path
 from dotenv import load_dotenv
 
 from database import get_db, Button, User, init_db
@@ -23,6 +25,13 @@ from command_validator import validate_command
 load_dotenv()
 
 app = FastAPI(title="Stream Deck API", version="1.0.0")
+
+# Cria diretório para uploads
+UPLOAD_DIR = Path("uploads")
+UPLOAD_DIR.mkdir(exist_ok=True)
+
+# Serve arquivos estáticos (imagens)
+app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
 # Inicializa banco de dados
 init_db()
@@ -126,6 +135,48 @@ async def get_button(
     if not button:
         raise HTTPException(status_code=404, detail="Botão não encontrado")
     return button
+
+
+@app.post("/api/buttons/{position}/upload-icon")
+async def upload_icon(
+    position: int,
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Upload de imagem para o ícone de um botão"""
+    button = db.query(Button).filter(Button.position == position).first()
+    if not button:
+        raise HTTPException(status_code=404, detail="Botão não encontrado")
+    
+    # Valida tipo de arquivo
+    if not file.content_type or not file.content_type.startswith('image/'):
+        raise HTTPException(status_code=400, detail="Arquivo deve ser uma imagem")
+    
+    # Gera nome único para o arquivo
+    file_extension = Path(file.filename).suffix if file.filename else '.png'
+    filename = f"button_{position}_{int(os.urandom(4).hex(), 16)}{file_extension}"
+    file_path = UPLOAD_DIR / filename
+    
+    # Salva arquivo
+    with open(file_path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+    
+    # Remove imagem antiga se existir e não for emoji
+    if button.icon and button.icon.startswith('/uploads/'):
+        old_file_path = UPLOAD_DIR / Path(button.icon).name
+        if old_file_path.exists():
+            try:
+                os.remove(old_file_path)
+            except:
+                pass
+    
+    # Atualiza botão com caminho da imagem
+    button.icon = f"/uploads/{filename}"
+    db.commit()
+    db.refresh(button)
+    
+    return {"icon": button.icon}
 
 
 @app.put("/api/buttons/{position}", response_model=ButtonResponse)
