@@ -13,4 +13,5 @@ ENV/
 .env
 .DS_Store
 uploads/
+logs/
 
