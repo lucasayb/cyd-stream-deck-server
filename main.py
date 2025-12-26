@@ -11,7 +11,10 @@ import shutil
 from pathlib import Path
 from dotenv import load_dotenv
 
-from database import get_db, Button, User, ApiKey, init_db
+from database import (
+    get_db, Button, User, ApiKey, Config, SetupStatus, init_db,
+    is_setup_completed, complete_setup, get_config_value, set_config_value
+)
 from security import (
     verify_password,
     get_password_hash,
@@ -37,27 +40,6 @@ app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
 # Inicializa banco de dados
 init_db()
-
-# Cria usuário admin padrão se não existir
-def create_default_admin():
-    db_gen = get_db()
-    db = next(db_gen)
-    try:
-        admin = db.query(User).filter(User.username == "admin").first()
-        if not admin:
-            admin_username = os.getenv("ADMIN_USERNAME", "admin")
-            admin_password = os.getenv("ADMIN_PASSWORD", "admin123")
-            admin = User(
-                username=admin_username,
-                hashed_password=get_password_hash(admin_password)
-            )
-            db.add(admin)
-            db.commit()
-            print(f"Usuário admin criado: {admin_username}")
-    finally:
-        db.close()
-
-create_default_admin()
 
 
 # Função para validar API Key
@@ -95,6 +77,15 @@ class ButtonResponse(BaseModel):
     background_color: str
     command: str
     label: str
+
+    class Config:
+        from_attributes = True
+
+
+class ButtonPublicResponse(BaseModel):
+    position: int
+    label: str
+    icon: str
 
     class Config:
         from_attributes = True
@@ -148,7 +139,32 @@ async def get_buttons(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Retorna todos os botões"""
+    """Retorna todos os botões (requer autenticação)"""
+    buttons = db.query(Button).order_by(Button.position).all()
+    return buttons
+
+
+@app.get("/api/buttons/public", response_model=List[ButtonPublicResponse])
+async def get_buttons_public(
+    api_key: str = Query(..., description="API Key para autenticação"),
+    db: Session = Depends(get_db)
+):
+    """
+    Retorna todos os botões via API Key (público)
+    Retorna apenas os campos: position, label e icon
+    
+    Uso em C/ESP32:
+    ```
+    GET http://localhost:8000/api/buttons/public?api_key=SUA_API_KEY
+    ```
+    """
+    # Valida API key
+    if not validate_api_key(api_key, db):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="API Key inválida ou inativa"
+        )
+    
     buttons = db.query(Button).order_by(Button.position).all()
     return buttons
 
@@ -366,12 +382,155 @@ async def delete_api_key(
     return {"message": "API Key desativada com sucesso"}
 
 
+# Setup Endpoints
+@app.get("/api/setup/status")
+async def get_setup_status():
+    """Verifica se o setup foi completado"""
+    return {"completed": is_setup_completed()}
+
+
+@app.get("/api/setup/config")
+async def get_setup_config():
+    """Obtém configurações do setup"""
+    return {
+        "button_count": int(get_config_value("button_count", "6"))
+    }
+
+
+@app.get("/api/config")
+async def get_config(
+    current_user: User = Depends(get_current_user)
+):
+    """Obtém configurações do sistema (requer autenticação)"""
+    return {
+        "button_count": int(get_config_value("button_count", "6"))
+    }
+
+
+class SetupRequest(BaseModel):
+    username: str
+    password: str
+    button_count: int = 6
+
+
+@app.post("/api/setup")
+async def complete_setup_endpoint(setup_data: SetupRequest, db: Session = Depends(get_db)):
+    """Completa o setup inicial"""
+    # Verifica se já foi completado
+    if is_setup_completed():
+        raise HTTPException(status_code=400, detail="Setup já foi completado")
+    
+    # Validações
+    if len(setup_data.username) < 3:
+        raise HTTPException(status_code=400, detail="Username deve ter pelo menos 3 caracteres")
+    if len(setup_data.password) < 6:
+        raise HTTPException(status_code=400, detail="Senha deve ter pelo menos 6 caracteres")
+    if setup_data.button_count < 1 or setup_data.button_count > 20:
+        raise HTTPException(status_code=400, detail="Número de botões deve estar entre 1 e 20")
+    
+    try:
+        # Cria usuário
+        existing_user = db.query(User).filter(User.username == setup_data.username).first()
+        if existing_user:
+            raise HTTPException(status_code=400, detail="Username já existe")
+        
+        user = User(
+            username=setup_data.username,
+            hashed_password=get_password_hash(setup_data.password)
+        )
+        db.add(user)
+        
+        # Salva configurações
+        set_config_value("button_count", str(setup_data.button_count))
+        
+        # Cria botões
+        existing_buttons = db.query(Button).count()
+        if existing_buttons == 0:
+            for i in range(setup_data.button_count):
+                button = Button(
+                    position=i,
+                    icon="📱",
+                    background_color="#3B82F6",
+                    command=f"echo 'Button {i+1}'",
+                    label=f"Botão {i+1}"
+                )
+                db.add(button)
+        
+        # Gera primeira API Key
+        api_key = secrets.token_urlsafe(32)
+        new_key = ApiKey(
+            key=api_key,
+            name="API Key inicial",
+            created_at=datetime.now().isoformat(),
+            is_active=1
+        )
+        db.add(new_key)
+        
+        db.commit()
+        
+        # Marca setup como completo
+        complete_setup()
+        
+        return {
+            "success": True,
+            "message": "Setup completado com sucesso",
+            "api_key": api_key
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Erro ao completar setup: {str(e)}")
+
+
+# Middleware para verificar setup
+@app.middleware("http")
+async def check_setup_middleware(request, call_next):
+    # Permite acesso a rotas de setup e API de setup
+    if request.url.path.startswith("/api/setup") or request.url.path == "/setup" or request.url.path.startswith("/uploads"):
+        response = await call_next(request)
+        return response
+    
+    # Se setup não foi completado, bloqueia acesso à interface principal
+    if not request.url.path.startswith("/api/"):
+        if not is_setup_completed():
+            if request.url.path == "/":
+                return HTMLResponse(content=get_setup_html(), status_code=200)
+            # Redireciona outras rotas para setup
+            return HTMLResponse(content=get_setup_html(), status_code=200)
+    
+    # Para rotas de API, verifica se setup foi completado (exceto /api/setup)
+    if request.url.path.startswith("/api/") and not request.url.path.startswith("/api/setup"):
+        if not is_setup_completed():
+            return JSONResponse(
+                status_code=503,
+                content={"detail": "Setup não foi completado. Acesse /setup para configurar o sistema."}
+            )
+    
+    response = await call_next(request)
+    return response
+
+
+def get_setup_html():
+    """Retorna HTML da página de setup"""
+    with open("templates/setup.html", "r", encoding="utf-8") as f:
+        return f.read()
+
+
 # Frontend
 @app.get("/", response_class=HTMLResponse)
 async def read_root():
     """Página principal"""
+    if not is_setup_completed():
+        return HTMLResponse(content=get_setup_html(), status_code=200)
     with open("templates/index.html", "r", encoding="utf-8") as f:
         return f.read()
+
+
+@app.get("/setup", response_class=HTMLResponse)
+async def setup_page():
+    """Página de setup"""
+    return HTMLResponse(content=get_setup_html(), status_code=200)
 
 
 if __name__ == "__main__":

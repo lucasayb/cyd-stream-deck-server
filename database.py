@@ -1,6 +1,7 @@
 from sqlalchemy import create_engine, Column, Integer, String, Text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
+from datetime import datetime
 import os
 
 DATABASE_URL = "sqlite:///./stream_deck.db"
@@ -39,25 +40,99 @@ class ApiKey(Base):
     is_active = Column(Integer, default=1)  # 1 = ativa, 0 = desativada
 
 
+class Config(Base):
+    __tablename__ = "config"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    key = Column(String, unique=True, nullable=False, index=True)
+    value = Column(Text, nullable=False)
+
+
+class SetupStatus(Base):
+    __tablename__ = "setup_status"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    is_completed = Column(Integer, default=0)  # 0 = não completado, 1 = completado
+    completed_at = Column(String, default="")
+
+
 def init_db():
     """Inicializa o banco de dados criando as tabelas"""
     Base.metadata.create_all(bind=engine)
     
-    # Cria botões padrão se não existirem
+    # Inicializa configurações padrão
     db = SessionLocal()
     try:
-        existing_buttons = db.query(Button).count()
-        if existing_buttons == 0:
-            for i in range(6):
-                button = Button(
-                    position=i,
-                    icon="📱",
-                    background_color="#3B82F6",
-                    command=f"echo 'Button {i+1}'",
-                    label=f"Botão {i+1}"
-                )
-                db.add(button)
+        # Verifica se já existe configuração de setup
+        setup = db.query(SetupStatus).first()
+        if not setup:
+            setup = SetupStatus(is_completed=0)
+            db.add(setup)
             db.commit()
+        
+        # Configurações padrão
+        default_configs = {
+            "button_count": "6"
+        }
+        
+        for key, value in default_configs.items():
+            config = db.query(Config).filter(Config.key == key).first()
+            if not config:
+                config = Config(key=key, value=value)
+                db.add(config)
+        
+        db.commit()
+    finally:
+        db.close()
+
+
+def get_config_value(key: str, default: str = "") -> str:
+    """Obtém valor de configuração"""
+    db = SessionLocal()
+    try:
+        config = db.query(Config).filter(Config.key == key).first()
+        return config.value if config else default
+    finally:
+        db.close()
+
+
+def set_config_value(key: str, value: str):
+    """Define valor de configuração"""
+    db = SessionLocal()
+    try:
+        config = db.query(Config).filter(Config.key == key).first()
+        if config:
+            config.value = value
+        else:
+            config = Config(key=key, value=value)
+            db.add(config)
+        db.commit()
+    finally:
+        db.close()
+
+
+def is_setup_completed() -> bool:
+    """Verifica se o setup foi completado"""
+    db = SessionLocal()
+    try:
+        setup = db.query(SetupStatus).first()
+        return setup.is_completed == 1 if setup else False
+    finally:
+        db.close()
+
+
+def complete_setup():
+    """Marca o setup como completado"""
+    db = SessionLocal()
+    try:
+        setup = db.query(SetupStatus).first()
+        if setup:
+            setup.is_completed = 1
+            setup.completed_at = datetime.now().isoformat()
+        else:
+            setup = SetupStatus(is_completed=1, completed_at=datetime.now().isoformat())
+            db.add(setup)
+        db.commit()
     finally:
         db.close()
 
