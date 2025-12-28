@@ -118,6 +118,12 @@ class TokenResponse(BaseModel):
     token_type: str = "bearer"
 
 
+class UpdateCredentialsRequest(BaseModel):
+    current_password: str
+    new_username: Optional[str] = None
+    new_password: Optional[str] = None
+
+
 class ApiKeyResponse(BaseModel):
     id: int
     key: str
@@ -149,6 +155,60 @@ async def login(login_data: LoginRequest, db: Session = Depends(get_db)):
         data={"sub": user.username}, expires_delta=access_token_expires
     )
     return {"access_token": access_token, "token_type": "bearer"}
+
+
+@app.put("/api/account")
+async def update_account(
+    update_data: UpdateCredentialsRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Atualiza username e/ou senha"""
+    # if not verify_password(update_data.current_password, current_user.hashed_password):
+    #     raise HTTPException(
+    #         status_code=status.HTTP_401_UNAUTHORIZED, detail="Senha atual incorreta"
+    #     )
+
+    new_username = (
+        update_data.new_username.strip()
+        if update_data.new_username is not None
+        else None
+    )
+    new_password = update_data.new_password
+    has_changes = False
+
+    if new_username:
+        if len(new_username) < 3:
+            raise HTTPException(
+                status_code=400, detail="Username deve ter pelo menos 3 caracteres"
+            )
+        if new_username != current_user.username:
+            existing_user = db.query(User).filter(User.username == new_username).first()
+            if existing_user:
+                raise HTTPException(status_code=400, detail="Username já existe")
+            current_user.username = new_username
+            has_changes = True
+
+    if new_password:
+        if len(new_password) < 6:
+            raise HTTPException(
+                status_code=400, detail="Senha deve ter pelo menos 6 caracteres"
+            )
+        current_user.hashed_password = get_password_hash(new_password)
+        has_changes = True
+
+    if not has_changes:
+        raise HTTPException(status_code=400, detail="Nenhuma alteração informada")
+
+    db.commit()
+    db.refresh(current_user)
+
+    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(
+        data={"sub": current_user.username}, expires_delta=access_token_expires
+    )
+
+    return {"message": "Credenciais atualizadas", "access_token": access_token}
 
 
 @app.get("/api/buttons", response_model=List[ButtonResponse])
